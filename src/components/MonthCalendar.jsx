@@ -47,7 +47,7 @@ export default function MonthCalendar() {
                 </button>
             </div>
 
-            <div className="grid grid-cols-7 text-center text-[11px] text-base-mut">
+            <div className="grid grid-cols-7 text-center text-[12px] text-base-mut">
                 {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
                     <div key={d} className="py-1">
                         {d}
@@ -55,8 +55,7 @@ export default function MonthCalendar() {
                 ))}
             </div>
 
-            {/* larger tap targets on phones; reduce gap so cells grow */}
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-1.5">
                 {monthMatrix.map((d, i) => {
                     const iso = toISODate(d);
                     const isCurrentMonth = d.getMonth() === cursor.getMonth();
@@ -93,23 +92,19 @@ export default function MonthCalendar() {
                                 checked ? "checked" : "not checked"
                             }`}
                         >
-                            <div className="absolute top-1 left-1 text-[12px] text-base-mut">
+                            <div className="absolute top-1.5 left-1.5 text-[13px] text-base-mut">
                                 {d.getDate()}
                             </div>
-                            <div className="flex items-center justify-center h-full text-3xl md:text-4xl">
+                            <div className="flex items-center justify-center h-full text-3xl">
                                 {checked ? "✔️" : val?.emoji || ""}
                             </div>
                             {today && (
-                                <div className="absolute bottom-1 left-1 right-1 h-1 rounded-full bg-brand-600/70" />
+                                <div className="absolute bottom-1.5 left-1.5 right-1.5 h-1.5 rounded-full bg-brand-600/70" />
                             )}
                         </motion.button>
                     );
                 })}
             </div>
-
-            <p className="text-sm text-base-mut">
-                Tip: long-press/right-click a day to add a note or emoji.
-            </p>
         </div>
     );
 }

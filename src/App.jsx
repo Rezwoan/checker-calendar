@@ -6,6 +6,9 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export default function App() {
     const loc = useLocation();
+    const hideTabsOn = ["/settings", "/tabs"];
+    const showTabBar = !hideTabsOn.some((p) => loc.pathname.startsWith(p));
+
     return (
         <div className="mx-auto max-w-screen-sm min-h-dvh flex flex-col">
             <header className="sticky top-0 z-20 bg-base-bg/80 backdrop-blur border-b border-base-line">
@@ -17,9 +20,11 @@ export default function App() {
                         </Link>
                     </div>
                 </div>
-                <div className="px-2 pb-2">
-                    <TabBar />
-                </div>
+                {showTabBar && (
+                    <div className="px-2 pb-2">
+                        <TabBar />
+                    </div>
+                )}
             </header>
 
             <main className="flex-1 px-3 pb-24">
