@@ -3,11 +3,12 @@ import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// If you deploy to GitHub Pages later, you can set:
-// export default defineConfig({ base: '/<repo-name>/', ... })
+const base = '/'  // on its own subdomain
+
 export default defineConfig({
+  base,
   plugins: [
-    tailwind(), // MUST be first so it handles @import "tailwindcss"
+    tailwind(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -20,10 +21,7 @@ export default defineConfig({
         display: 'standalone',
         background_color: '#0a0a0a',
         theme_color: '#0a0a0a',
-        description: 'Multi-tab checkmark calendar with reports & history.',
-        icons: [
-          { src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml' }
-        ]
+        icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml' }]
       }
     })
   ]
