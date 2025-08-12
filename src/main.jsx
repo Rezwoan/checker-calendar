@@ -4,12 +4,9 @@ import { RouterProvider } from "react-router-dom";
 import router from "./router.jsx";
 import "./styles.css";
 import { registerSW } from "virtual:pwa-register";
+import "./lib/pwaInstall"; // initialize PWA install listeners
 
-/**
- * Deep-link import:
- * Accept ?ccsync=<base64> or #ccsync=<base64>
- * Payload is from Settings → Show QR / Copy Link.
- */
+// Deep-link import for token+gist via ?ccsync=... or #ccsync=...
 (function handleDeepLinkImport() {
     try {
         const url = new URL(window.location.href);
@@ -19,7 +16,6 @@ import { registerSW } from "virtual:pwa-register";
             : null;
         const payload = fromQuery || fromHash;
         if (!payload) return;
-
         const json = decodeURIComponent(escape(atob(payload)));
         const obj = JSON.parse(json);
         if (obj?.t && obj?.g) {
@@ -30,15 +26,11 @@ import { registerSW } from "virtual:pwa-register";
                 "Imported credentials from link. You can Download ← Gist now."
             );
         }
-
-        // Clean URL and navigate to /settings
         const clean = new URL(
             window.location.origin + import.meta.env.BASE_URL + "settings"
         );
         window.history.replaceState({}, "", clean.toString());
-    } catch (e) {
-        console.warn("Import link parse failed:", e);
-    }
+    } catch {}
 })();
 
 registerSW({ immediate: true });

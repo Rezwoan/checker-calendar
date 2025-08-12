@@ -12,18 +12,17 @@ export const useAppStore = create(
             activeTabId: null,
             // checks: { [tabId]: { [isoDate]: { checked, note, emoji } } }
             checks: {},
-            history: [],              // [{id, ts, action, tabId, date, details}]
+            history: [],
             createdAt: new Date().toISOString(),
 
-            // init from DB (IndexedDB)
             load: async () => {
                 const payload = await db.loadAll()
                 if (payload) set(payload)
+
                 if (!get().tabs.length) {
-                    // seed two tabs
-                    const t1 = { id: crypto.randomUUID(), name: 'Creatine', order: 0, emoji: '💊' }
-                    const t2 = { id: crypto.randomUUID(), name: 'Gym', order: 1, emoji: '🏋️' }
-                    set({ tabs: [t1, t2], activeTabId: t1.id })
+                    // New users start with a single Calendar tab
+                    const t = { id: crypto.randomUUID(), name: 'Calendar', order: 0, emoji: '📅' }
+                    set({ tabs: [t], activeTabId: t.id })
                     get().save()
                 } else if (!get().activeTabId) {
                     set({ activeTabId: get().tabs[0].id })
@@ -51,10 +50,35 @@ export const useAppStore = create(
                 get().save('renameTab', { id, name })
             },
 
+            setTabEmoji: (id, emoji) => {
+                set({ tabs: get().tabs.map(t => t.id === id ? { ...t, emoji } : t) })
+                get().save('setTabEmoji', { id, emoji })
+            },
+
             reorderTabs: (orderedIds) => {
                 const map = new Map(orderedIds.map((id, i) => [id, i]))
-                set({ tabs: get().tabs.map(t => ({ ...t, order: map.get(t.id) })).sort((a, b) => a.order - b.order) })
+                set({
+                    tabs: get().tabs.map(t => ({ ...t, order: map.get(t.id) })).sort((a, b) => a.order - b.order)
+                })
                 get().save('reorderTabs', { orderedIds })
+            },
+
+            moveTabUp: (id) => {
+                const tabs = [...get().tabs].sort((a, b) => a.order - b.order)
+                const idx = tabs.findIndex(t => t.id === id)
+                if (idx <= 0) return
+                    ;[tabs[idx - 1].order, tabs[idx].order] = [tabs[idx].order, tabs[idx - 1].order]
+                set({ tabs: tabs.sort((a, b) => a.order - b.order) })
+                get().save('reorderTabs', { orderedIds: tabs.map(t => t.id) })
+            },
+
+            moveTabDown: (id) => {
+                const tabs = [...get().tabs].sort((a, b) => a.order - b.order)
+                const idx = tabs.findIndex(t => t.id === id)
+                if (idx === -1 || idx === tabs.length - 1) return
+                    ;[tabs[idx + 1].order, tabs[idx].order] = [tabs[idx].order, tabs[idx + 1].order]
+                set({ tabs: tabs.sort((a, b) => a.order - b.order) })
+                get().save('reorderTabs', { orderedIds: tabs.map(t => t.id) })
             },
 
             toggleCheck: (dateISO = todayISO) => {
@@ -80,7 +104,9 @@ export const useAppStore = create(
             save: async (action = 'save', details = {}) => {
                 const state = get()
                 const payload = {
-                    tabs: state.tabs, activeTabId: state.activeTabId, checks: state.checks,
+                    tabs: state.tabs,
+                    activeTabId: state.activeTabId,
+                    checks: state.checks,
                     history: [{ id: crypto.randomUUID(), ts: Date.now(), action, ...details }, ...state.history].slice(0, 500),
                     createdAt: state.createdAt
                 }

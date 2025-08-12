@@ -4,21 +4,24 @@ import App from "./App.jsx";
 import Home from "./pages/Home.jsx";
 import Report from "./pages/Report.jsx";
 import History from "./pages/History.jsx";
-import Usage from "./pages/Usage.jsx";
+import Tabs from "./pages/Tabs.jsx";
 import Settings from "./pages/Settings.jsx";
 
-const router = createBrowserRouter([
-    {
-        path: "/",
-        element: <App />,
-        children: [
-            { index: true, element: <Home /> },
-            { path: "report", element: <Report /> },
-            { path: "history", element: <History /> },
-            { path: "usage", element: <Usage /> },
-            { path: "settings", element: <Settings /> },
-        ],
-    },
-]);
+const router = createBrowserRouter(
+    [
+        {
+            path: "/",
+            element: <App />,
+            children: [
+                { index: true, element: <Home /> },
+                { path: "report", element: <Report /> },
+                { path: "history", element: <History /> },
+                { path: "tabs", element: <Tabs /> },
+                { path: "settings", element: <Settings /> },
+            ],
+        },
+    ],
+    { basename: import.meta.env.BASE_URL }
+);
 
 export default router;

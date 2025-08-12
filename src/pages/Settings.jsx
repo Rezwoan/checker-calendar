@@ -2,6 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 import * as gist from "../lib/gistSync";
 import { QRCodeSVG } from "qrcode.react";
+import {
+    getState as getPWAState,
+    subscribe as onPWAChange,
+    promptInstall,
+} from "../lib/pwaInstall";
 
 export default function Settings() {
     const store = useAppStore();
@@ -10,13 +15,15 @@ export default function Settings() {
     const [gistId, setGistId] = useState(localStorage.getItem("gh_gist") || "");
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState(localStorage.getItem("cc_msg") || "");
-
-    // clear one-time message
     useEffect(() => {
         if (msg) localStorage.removeItem("cc_msg");
     }, [msg]);
 
-    // ---- Auto Sync (periodic Upload) ----
+    // ----- PWA install state -----
+    const [pwa, setPwa] = useState(getPWAState());
+    useEffect(() => onPWAChange(setPwa), []);
+
+    // ----- Auto Sync -----
     const [autoSync, setAutoSync] = useState(
         localStorage.getItem("cc_auto_sync") === "1"
     );
@@ -24,9 +31,7 @@ export default function Settings() {
         Number(localStorage.getItem("cc_auto_interval") || 15)
     );
     const autoTimer = useRef(null);
-
     useEffect(() => {
-        // (re)start timer when toggled or interval changes
         if (autoTimer.current) {
             clearInterval(autoTimer.current);
             autoTimer.current = null;
@@ -42,7 +47,6 @@ export default function Settings() {
                     setMsg("Auto-sync failed: " + e.message);
                 }
             };
-            // run once now, then schedule
             run();
             autoTimer.current = setInterval(
                 run,
@@ -51,43 +55,32 @@ export default function Settings() {
         }
         return () => autoTimer.current && clearInterval(autoTimer.current);
     }, [autoSync, intervalMin, token, gistId]);
-
-    const toggleAuto = (checked) => {
-        setAutoSync(checked);
-        localStorage.setItem("cc_auto_sync", checked ? "1" : "0");
+    const toggleAuto = (x) => {
+        setAutoSync(x);
+        localStorage.setItem("cc_auto_sync", x ? "1" : "0");
     };
-    const saveInterval = (val) => {
-        const n = Math.max(1, Number(val) || 15);
+    const saveInterval = (v) => {
+        const n = Math.max(1, Number(v) || 15);
         setIntervalMin(n);
         localStorage.setItem("cc_auto_interval", String(n));
     };
 
-    // ---- QR share/scan ----
+    // ----- QR share/scan -----
     const [showQR, setShowQR] = useState(false);
     const [scanQR, setScanQR] = useState(false);
     const scannerStarted = useRef(false);
-
     const makePayloadJSON = () =>
         JSON.stringify({ t: token.trim(), g: gistId.trim(), v: 1 });
     const makeBase64 = (json) => btoa(unescape(encodeURIComponent(json)));
-
-    // Plain payload QR (works only inside the app's "Scan QR")
-    const makePayloadQR = () => "checker-sync:" + makeBase64(makePayloadJSON());
-
-    // Shareable URL QR (works with native camera/other scanners)
     const makeShareLink = () => {
         const base = window.location.origin + import.meta.env.BASE_URL;
         const url = new URL(base);
         url.searchParams.set("ccsync", makeBase64(makePayloadJSON()));
-        // we’ll parse it in main.jsx and redirect to /settings
         return url.toString();
     };
-
-    // Start camera with a SQUARE scan box
     useEffect(() => {
-        let html5QrCode = null;
-        let mounted = true;
-
+        let html5QrCode = null,
+            mounted = true;
         async function startScanner() {
             if (!scanQR || scannerStarted.current) return;
             scannerStarted.current = true;
@@ -101,7 +94,7 @@ export default function Settings() {
                     { facingMode: "environment" },
                     {
                         fps: 10,
-                        qrbox: { width: 260, height: 260 }, // << square box
+                        qrbox: { width: 260, height: 260 },
                         aspectRatio: 1.0,
                         supportedScanTypes: [
                             Html5QrcodeScanType.SCAN_TYPE_CAMERA,
@@ -109,8 +102,20 @@ export default function Settings() {
                     },
                     (decoded) => {
                         try {
-                            // Accept both our in-app payload and the public share link
-                            if (decoded.startsWith("checker-sync:")) {
+                            if (decoded.startsWith("http")) {
+                                const u = new URL(decoded);
+                                const code = u.searchParams.get("ccsync");
+                                if (!code) throw new Error("No ccsync param");
+                                const json = decodeURIComponent(
+                                    escape(atob(code))
+                                );
+                                const obj = JSON.parse(json);
+                                setToken(obj.t || "");
+                                setGistId(obj.g || "");
+                                setMsg(
+                                    "Scanned link. Click Save, then Download ← Gist."
+                                );
+                            } else if (decoded.startsWith("checker-sync:")) {
                                 const b64 = decoded.slice(
                                     "checker-sync:".length
                                 );
@@ -118,33 +123,11 @@ export default function Settings() {
                                     escape(atob(b64))
                                 );
                                 const obj = JSON.parse(json);
-                                if (obj?.t && obj?.g) {
-                                    setToken(obj.t);
-                                    setGistId(obj.g);
-                                    setMsg(
-                                        "Scanned. Click Save, then Download ← Gist."
-                                    );
-                                } else {
-                                    throw new Error("Missing fields");
-                                }
-                            } else if (decoded.startsWith("http")) {
-                                try {
-                                    const u = new URL(decoded);
-                                    const code = u.searchParams.get("ccsync");
-                                    if (!code)
-                                        throw new Error("No ccsync param");
-                                    const json = decodeURIComponent(
-                                        escape(atob(code))
-                                    );
-                                    const obj = JSON.parse(json);
-                                    setToken(obj.t || "");
-                                    setGistId(obj.g || "");
-                                    setMsg(
-                                        "Scanned link. Click Save, then Download ← Gist."
-                                    );
-                                } catch (e) {
-                                    setMsg("Invalid link QR: " + e.message);
-                                }
+                                setToken(obj.t || "");
+                                setGistId(obj.g || "");
+                                setMsg(
+                                    "Scanned. Click Save, then Download ← Gist."
+                                );
                             } else {
                                 setMsg("Unsupported QR content.");
                             }
@@ -158,28 +141,24 @@ export default function Settings() {
                 setMsg("Camera error: " + e.message);
             }
         }
-
         if (scanQR) startScanner();
-
         return () => {
             mounted = false;
-            if (html5QrCode) {
+            if (html5QrCode)
                 html5QrCode
                     .stop()
                     .catch(() => {})
                     .finally(() => html5QrCode.clear());
-            }
             scannerStarted.current = false;
         };
     }, [scanQR]);
 
-    // ---------- Actions ----------
+    // ----- Gist actions -----
     const saveLocal = () => {
         localStorage.setItem("gh_token", token.trim());
         localStorage.setItem("gh_gist", gistId.trim());
-        setMsg("Saved locally (stored only in this browser).");
+        setMsg("Saved locally (this browser only).");
     };
-
     const testToken = async () => {
         try {
             setBusy(true);
@@ -197,7 +176,6 @@ export default function Settings() {
             setBusy(false);
         }
     };
-
     const doUpload = async () => {
         try {
             setBusy(true);
@@ -214,7 +192,6 @@ export default function Settings() {
             setBusy(false);
         }
     };
-
     const doDownload = async () => {
         try {
             setBusy(true);
@@ -229,10 +206,50 @@ export default function Settings() {
         }
     };
 
-    const shareLink = makeShareLink();
-
     return (
         <div className="space-y-3">
+            {/* Install App */}
+            <div className="card p-4 space-y-3">
+                <div className="text-lg font-semibold">Install App</div>
+                <div className="flex gap-2 flex-wrap">
+                    <button
+                        className="btn"
+                        disabled={!pwa.canInstall || pwa.installed}
+                        onClick={async () => {
+                            try {
+                                const { outcome } = await promptInstall();
+                                setMsg(
+                                    outcome === "accepted"
+                                        ? "Installation started."
+                                        : "Install dismissed."
+                                );
+                            } catch {
+                                setMsg(
+                                    "Install prompt not available; see instructions below."
+                                );
+                            }
+                        }}
+                    >
+                        {pwa.installed
+                            ? "Installed"
+                            : pwa.canInstall
+                            ? "Install"
+                            : "Install (unavailable)"}
+                    </button>
+                    <button
+                        className="btn"
+                        onClick={() => window.open("about:blank", "_self")}
+                    >
+                        Open in this window
+                    </button>
+                </div>
+                <div className="text-xs text-base-mut">
+                    {pwa.canInstall
+                        ? "Install prompt is available on this device/browser."
+                        : "Tip: On iOS Safari, use Share → “Add to Home Screen”. On desktop Chrome/Edge, click the Install icon in the address bar."}
+                </div>
+            </div>
+
             {/* Data export/import */}
             <div className="card p-4 space-y-3">
                 <div className="text-lg font-semibold">Data</div>
@@ -257,8 +274,8 @@ export default function Settings() {
                     </label>
                 </div>
                 <p className="text-xs text-base-mut">
-                    Your data lives locally in this browser (IndexedDB). Export
-                    regularly if you want backups.
+                    Data lives locally (IndexedDB). Export regularly for
+                    backups.
                 </p>
             </div>
 
@@ -267,7 +284,6 @@ export default function Settings() {
                 <div className="text-lg font-semibold">
                     Optional GitHub Gist Sync
                 </div>
-
                 <div className="space-y-2">
                     <input
                         className="w-full bg-neutral-900 rounded-xl px-3 py-2"
@@ -282,7 +298,6 @@ export default function Settings() {
                         onChange={(e) => setGistId(e.target.value)}
                     />
                 </div>
-
                 <div className="flex gap-2 flex-wrap">
                     <button className="btn" onClick={saveLocal}>
                         Save
@@ -308,7 +323,6 @@ export default function Settings() {
                     >
                         Download ← Gist
                     </button>
-                    {/* QR & Link */}
                     <button
                         className="btn"
                         disabled={!token || !gistId}
@@ -323,11 +337,12 @@ export default function Settings() {
                         className="btn"
                         disabled={!token || !gistId}
                         onClick={async () => {
+                            const link = makeShareLink();
                             try {
-                                await navigator.clipboard.writeText(shareLink);
+                                await navigator.clipboard.writeText(link);
                                 setMsg("Share link copied.");
                             } catch {
-                                setMsg(shareLink);
+                                setMsg(link);
                             }
                         }}
                     >
@@ -361,60 +376,37 @@ export default function Settings() {
 
                 <div className="text-sm text-base-mut">{msg}</div>
                 <p className="text-xs text-base-mut">
-                    Token & Gist ID are saved only in this browser
-                    (localStorage). We only talk to GitHub when you press
-                    Upload/Download or when Auto Sync runs.
+                    Token & Gist ID stay in this browser (localStorage). We only
+                    contact GitHub when you Upload/Download or Auto Sync runs.
                 </p>
 
-                {/* Instructions */}
                 <div className="mt-3">
                     <details className="open:bg-neutral-900/50 rounded-xl p-3 border border-base-line">
                         <summary className="cursor-pointer text-sm font-medium">
-                            How to create a GitHub token (for Gist sync)
+                            How to create a GitHub token
                         </summary>
                         <ol className="list-decimal pl-5 mt-2 space-y-1 text-sm text-base-mut">
-                            <li>Sign in to GitHub.</li>
                             <li>
-                                Open{" "}
-                                <a
-                                    className="underline"
-                                    href="https://github.com/settings/tokens"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                >
-                                    Settings → Developer settings → Personal
-                                    access tokens
-                                </a>
-                                .
+                                GitHub → Settings → Developer settings →
+                                Personal access tokens.
                             </li>
                             <li>
-                                Choose <strong>Tokens (classic)</strong> →{" "}
-                                <strong>Generate new token (classic)</strong>.
-                            </li>
-                            <li>Name it and set an expiration.</li>
-                            <li>
-                                Enable only the <strong>gist</strong> scope.
+                                “Tokens (classic)” → **Generate new token
+                                (classic)**.
                             </li>
                             <li>
-                                Generate and copy the token — you’ll only see it
-                                once.
-                            </li>
-                            <li>Paste above → Save → (optional) Test Token.</li>
-                            <li>
-                                Click <strong>Upload → Gist</strong> (first time
-                                leave Gist ID empty; it will auto-fill).
+                                Name it, set expiration, enable only **gist**.
                             </li>
                             <li>
-                                On your phone: simply open the **Share Link** QR
-                                with the camera, it will open this app and
-                                prefill credentials. Then tap **Download ←
-                                Gist**.
+                                Copy the token once, paste above. First upload
+                                leaves Gist ID blank; it will auto-fill.
+                            </li>
+                            <li>
+                                To sync on another device: open **Show QR** and
+                                scan with phone camera, or **Copy Share Link**
+                                and open it on the device.
                             </li>
                         </ol>
-                        <p className="text-xs mt-2">
-                            Security tip: Treat your token like a password. Only
-                            show/share the QR with devices you trust.
-                        </p>
                     </details>
                 </div>
             </div>
@@ -430,25 +422,13 @@ export default function Settings() {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="text-sm mb-2 text-base-mut">
-                            Scan this on your other device
+                            Scan on your other device
                         </div>
                         <div className="bg-white rounded-xl p-3 flex flex-col items-center gap-3">
-                            {/* Shareable URL QR (works with native camera) */}
                             <QRCodeSVG value={makeShareLink()} size={220} />
                             <div className="text-xs text-black/70">
                                 Opens app & pre-fills token + gist
                             </div>
-                            <details className="w-full">
-                                <summary className="cursor-pointer text-xs text-black/70">
-                                    Show in-app payload QR
-                                </summary>
-                                <div className="mt-2 flex justify-center">
-                                    <QRCodeSVG
-                                        value={makePayloadQR()}
-                                        size={180}
-                                    />
-                                </div>
-                            </details>
                         </div>
                         <button
                             className="btn w-full mt-3"
@@ -472,7 +452,6 @@ export default function Settings() {
                         <div className="text-sm mb-2 text-center text-base-mut">
                             Point camera at QR
                         </div>
-                        {/* Square scanning area */}
                         <div
                             id="qr-reader"
                             className="mx-auto overflow-hidden rounded-xl bg-black"

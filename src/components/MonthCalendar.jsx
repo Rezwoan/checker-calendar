@@ -9,7 +9,7 @@ import {
 import { motion } from "framer-motion";
 
 export default function MonthCalendar() {
-    const { tabs, activeTabId, checks, toggleCheck, setNote } = useAppStore();
+    const { activeTabId, checks, toggleCheck, setNote } = useAppStore();
     const [cursor, setCursor] = useState(new Date());
     const monthMatrix = useMemo(
         () => getMonthMatrix(cursor.getFullYear(), cursor.getMonth()),
@@ -22,7 +22,6 @@ export default function MonthCalendar() {
         d.setMonth(d.getMonth() + delta);
         setCursor(d);
     };
-
     const monthLabel = cursor.toLocaleString(undefined, {
         month: "long",
         year: "numeric",
@@ -31,16 +30,24 @@ export default function MonthCalendar() {
     return (
         <div className="space-y-3">
             <div className="flex items-center justify-between">
-                <button className="btn" onClick={() => go(-1)}>
+                <button
+                    className="btn"
+                    onClick={() => go(-1)}
+                    aria-label="Previous month"
+                >
                     ‹
                 </button>
                 <div className="text-lg font-semibold">{monthLabel}</div>
-                <button className="btn" onClick={() => go(1)}>
+                <button
+                    className="btn"
+                    onClick={() => go(1)}
+                    aria-label="Next month"
+                >
                     ›
                 </button>
             </div>
 
-            <div className="grid grid-cols-7 text-center text-xs text-base-mut">
+            <div className="grid grid-cols-7 text-center text-[11px] text-base-mut">
                 {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
                     <div key={d} className="py-1">
                         {d}
@@ -48,6 +55,7 @@ export default function MonthCalendar() {
                 ))}
             </div>
 
+            {/* larger tap targets on phones; reduce gap so cells grow */}
             <div className="grid grid-cols-7 gap-1">
                 {monthMatrix.map((d, i) => {
                     const iso = toISODate(d);
@@ -81,15 +89,18 @@ export default function MonthCalendar() {
                                     ? "bg-brand-600/20 border-brand-600"
                                     : "border-base-line"
                             } relative`}
+                            aria-label={`Day ${d.getDate()} ${
+                                checked ? "checked" : "not checked"
+                            }`}
                         >
-                            <div className="absolute top-1 left-1 text-[10px] text-base-mut">
+                            <div className="absolute top-1 left-1 text-[12px] text-base-mut">
                                 {d.getDate()}
                             </div>
-                            <div className="flex items-center justify-center h-full text-2xl">
+                            <div className="flex items-center justify-center h-full text-3xl md:text-4xl">
                                 {checked ? "✔️" : val?.emoji || ""}
                             </div>
                             {today && (
-                                <div className="absolute bottom-1 left-1 right-1 h-1 rounded-full bg-brand-600/50" />
+                                <div className="absolute bottom-1 left-1 right-1 h-1 rounded-full bg-brand-600/70" />
                             )}
                         </motion.button>
                     );
