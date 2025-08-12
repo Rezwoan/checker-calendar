@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwind from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-const base = '/'  // on its own subdomain
+const base = '/' // because we’re on checker-calendar.rezwoan.me
 
 export default defineConfig({
   base,
