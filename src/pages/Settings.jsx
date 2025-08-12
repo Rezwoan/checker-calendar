@@ -9,18 +9,193 @@ export default function Settings() {
     const [token, setToken] = useState(localStorage.getItem("gh_token") || "");
     const [gistId, setGistId] = useState(localStorage.getItem("gh_gist") || "");
     const [busy, setBusy] = useState(false);
-    const [msg, setMsg] = useState("");
+    const [msg, setMsg] = useState(localStorage.getItem("cc_msg") || "");
 
-    // QR UI
+    // clear one-time message
+    useEffect(() => {
+        if (msg) localStorage.removeItem("cc_msg");
+    }, [msg]);
+
+    // ---- Auto Sync (periodic Upload) ----
+    const [autoSync, setAutoSync] = useState(
+        localStorage.getItem("cc_auto_sync") === "1"
+    );
+    const [intervalMin, setIntervalMin] = useState(
+        Number(localStorage.getItem("cc_auto_interval") || 15)
+    );
+    const autoTimer = useRef(null);
+
+    useEffect(() => {
+        // (re)start timer when toggled or interval changes
+        if (autoTimer.current) {
+            clearInterval(autoTimer.current);
+            autoTimer.current = null;
+        }
+        if (autoSync && token && gistId) {
+            const run = async () => {
+                try {
+                    const snapshot = useAppStore.getState();
+                    const content = JSON.stringify(snapshot, null, 2);
+                    await gist.upsertGist({ token, gistId, content });
+                    setMsg("Auto-sync: uploaded.");
+                } catch (e) {
+                    setMsg("Auto-sync failed: " + e.message);
+                }
+            };
+            // run once now, then schedule
+            run();
+            autoTimer.current = setInterval(
+                run,
+                Math.max(1, intervalMin) * 60_000
+            );
+        }
+        return () => autoTimer.current && clearInterval(autoTimer.current);
+    }, [autoSync, intervalMin, token, gistId]);
+
+    const toggleAuto = (checked) => {
+        setAutoSync(checked);
+        localStorage.setItem("cc_auto_sync", checked ? "1" : "0");
+    };
+    const saveInterval = (val) => {
+        const n = Math.max(1, Number(val) || 15);
+        setIntervalMin(n);
+        localStorage.setItem("cc_auto_interval", String(n));
+    };
+
+    // ---- QR share/scan ----
     const [showQR, setShowQR] = useState(false);
     const [scanQR, setScanQR] = useState(false);
-    const scannerRef = useRef(null);
     const scannerStarted = useRef(false);
 
+    const makePayloadJSON = () =>
+        JSON.stringify({ t: token.trim(), g: gistId.trim(), v: 1 });
+    const makeBase64 = (json) => btoa(unescape(encodeURIComponent(json)));
+
+    // Plain payload QR (works only inside the app's "Scan QR")
+    const makePayloadQR = () => "checker-sync:" + makeBase64(makePayloadJSON());
+
+    // Shareable URL QR (works with native camera/other scanners)
+    const makeShareLink = () => {
+        const base = window.location.origin + import.meta.env.BASE_URL;
+        const url = new URL(base);
+        url.searchParams.set("ccsync", makeBase64(makePayloadJSON()));
+        // we’ll parse it in main.jsx and redirect to /settings
+        return url.toString();
+    };
+
+    // Start camera with a SQUARE scan box
+    useEffect(() => {
+        let html5QrCode = null;
+        let mounted = true;
+
+        async function startScanner() {
+            if (!scanQR || scannerStarted.current) return;
+            scannerStarted.current = true;
+            const { Html5Qrcode, Html5QrcodeScanType } = await import(
+                "html5-qrcode"
+            );
+            if (!mounted) return;
+            html5QrCode = new Html5Qrcode("qr-reader", { verbose: false });
+            try {
+                await html5QrCode.start(
+                    { facingMode: "environment" },
+                    {
+                        fps: 10,
+                        qrbox: { width: 260, height: 260 }, // << square box
+                        aspectRatio: 1.0,
+                        supportedScanTypes: [
+                            Html5QrcodeScanType.SCAN_TYPE_CAMERA,
+                        ],
+                    },
+                    (decoded) => {
+                        try {
+                            // Accept both our in-app payload and the public share link
+                            if (decoded.startsWith("checker-sync:")) {
+                                const b64 = decoded.slice(
+                                    "checker-sync:".length
+                                );
+                                const json = decodeURIComponent(
+                                    escape(atob(b64))
+                                );
+                                const obj = JSON.parse(json);
+                                if (obj?.t && obj?.g) {
+                                    setToken(obj.t);
+                                    setGistId(obj.g);
+                                    setMsg(
+                                        "Scanned. Click Save, then Download ← Gist."
+                                    );
+                                } else {
+                                    throw new Error("Missing fields");
+                                }
+                            } else if (decoded.startsWith("http")) {
+                                try {
+                                    const u = new URL(decoded);
+                                    const code = u.searchParams.get("ccsync");
+                                    if (!code)
+                                        throw new Error("No ccsync param");
+                                    const json = decodeURIComponent(
+                                        escape(atob(code))
+                                    );
+                                    const obj = JSON.parse(json);
+                                    setToken(obj.t || "");
+                                    setGistId(obj.g || "");
+                                    setMsg(
+                                        "Scanned link. Click Save, then Download ← Gist."
+                                    );
+                                } catch (e) {
+                                    setMsg("Invalid link QR: " + e.message);
+                                }
+                            } else {
+                                setMsg("Unsupported QR content.");
+                            }
+                            setScanQR(false);
+                        } catch (err) {
+                            setMsg("Invalid QR: " + err.message);
+                        }
+                    }
+                );
+            } catch (e) {
+                setMsg("Camera error: " + e.message);
+            }
+        }
+
+        if (scanQR) startScanner();
+
+        return () => {
+            mounted = false;
+            if (html5QrCode) {
+                html5QrCode
+                    .stop()
+                    .catch(() => {})
+                    .finally(() => html5QrCode.clear());
+            }
+            scannerStarted.current = false;
+        };
+    }, [scanQR]);
+
+    // ---------- Actions ----------
     const saveLocal = () => {
         localStorage.setItem("gh_token", token.trim());
         localStorage.setItem("gh_gist", gistId.trim());
         setMsg("Saved locally (stored only in this browser).");
+    };
+
+    const testToken = async () => {
+        try {
+            setBusy(true);
+            setMsg("");
+            const res = await fetch("https://api.github.com/user", {
+                headers: { Authorization: `token ${token}` },
+            });
+            if (!res.ok)
+                throw new Error("Token failed (check scope or value).");
+            const u = await res.json();
+            setMsg(`Token OK • @${u.login}`);
+        } catch (e) {
+            setMsg(e.message);
+        } finally {
+            setBusy(false);
+        }
     };
 
     const doUpload = async () => {
@@ -54,101 +229,7 @@ export default function Settings() {
         }
     };
 
-    const testToken = async () => {
-        try {
-            setBusy(true);
-            setMsg("");
-            const res = await fetch("https://api.github.com/user", {
-                headers: { Authorization: `token ${token}` },
-            });
-            if (!res.ok)
-                throw new Error("Token failed (check scope or value).");
-            const u = await res.json();
-            setMsg(`Token OK • @${u.login}`);
-        } catch (e) {
-            setMsg(e.message);
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    const onImport = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const text = await file.text();
-        await store.importJSON(JSON.parse(text));
-        setMsg("Imported from file.");
-    };
-
-    // ----- QR share/scan helpers -----
-    // Encode token+gistId in a compact safe string
-    const makeQRPayload = () => {
-        const obj = { t: token.trim(), g: gistId.trim(), v: 1 };
-        return (
-            "checker-sync:" +
-            btoa(unescape(encodeURIComponent(JSON.stringify(obj))))
-        );
-    };
-
-    // Decode from scanned string
-    const parseQRPayload = (str) => {
-        if (!str?.startsWith("checker-sync:"))
-            throw new Error("Not a Checker code");
-        const b64 = str.slice("checker-sync:".length);
-        const json = decodeURIComponent(escape(atob(b64)));
-        const obj = JSON.parse(json);
-        if (!obj.t || !obj.g) throw new Error("Missing fields");
-        return { token: obj.t, gistId: obj.g };
-    };
-
-    // Start camera scanner when modal opens
-    useEffect(() => {
-        let html5QrCode = null;
-        let mounted = true;
-
-        async function startScanner() {
-            if (!scanQR || scannerStarted.current) return;
-            scannerStarted.current = true;
-            const { Html5Qrcode } = await import("html5-qrcode");
-            if (!mounted) return;
-            html5QrCode = new Html5Qrcode("qr-reader", { verbose: false });
-            try {
-                await html5QrCode.start(
-                    { facingMode: "environment" },
-                    { fps: 10, qrbox: 240 },
-                    (decoded) => {
-                        try {
-                            const { token: t, gistId: g } =
-                                parseQRPayload(decoded);
-                            setToken(t);
-                            setGistId(g);
-                            setMsg(
-                                "Scanned. Click Save, then you can Download ← Gist."
-                            );
-                            setScanQR(false);
-                        } catch (err) {
-                            setMsg("Invalid QR: " + err.message);
-                        }
-                    }
-                );
-            } catch (e) {
-                setMsg("Camera error: " + e.message);
-            }
-        }
-
-        if (scanQR) startScanner();
-
-        return () => {
-            mounted = false;
-            if (html5QrCode) {
-                html5QrCode
-                    .stop()
-                    .catch(() => {})
-                    .finally(() => html5QrCode.clear());
-            }
-            scannerStarted.current = false;
-        };
-    }, [scanQR]);
+    const shareLink = makeShareLink();
 
     return (
         <div className="space-y-3">
@@ -165,7 +246,13 @@ export default function Settings() {
                             type="file"
                             accept="application/json"
                             className="hidden"
-                            onChange={onImport}
+                            onChange={async (e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                const text = await f.text();
+                                await store.importJSON(JSON.parse(text));
+                                setMsg("Imported from file.");
+                            }}
                         />
                     </label>
                 </div>
@@ -221,7 +308,7 @@ export default function Settings() {
                     >
                         Download ← Gist
                     </button>
-                    {/* QR actions */}
+                    {/* QR & Link */}
                     <button
                         className="btn"
                         disabled={!token || !gistId}
@@ -232,13 +319,51 @@ export default function Settings() {
                     <button className="btn" onClick={() => setScanQR(true)}>
                         Scan QR
                     </button>
+                    <button
+                        className="btn"
+                        disabled={!token || !gistId}
+                        onClick={async () => {
+                            try {
+                                await navigator.clipboard.writeText(shareLink);
+                                setMsg("Share link copied.");
+                            } catch {
+                                setMsg(shareLink);
+                            }
+                        }}
+                    >
+                        Copy Share Link
+                    </button>
+                </div>
+
+                {/* Auto-sync controls */}
+                <div className="flex items-center gap-3 pt-2">
+                    <label className="flex items-center gap-2 text-sm">
+                        <input
+                            type="checkbox"
+                            className="accent-white"
+                            checked={autoSync}
+                            onChange={(e) => toggleAuto(e.target.checked)}
+                        />
+                        Enable Auto Sync (upload)
+                    </label>
+                    <div className="flex items-center gap-2 text-sm">
+                        every
+                        <input
+                            type="number"
+                            min="1"
+                            className="w-16 bg-neutral-900 rounded px-2 py-1"
+                            value={intervalMin}
+                            onChange={(e) => saveInterval(e.target.value)}
+                        />
+                        min
+                    </div>
                 </div>
 
                 <div className="text-sm text-base-mut">{msg}</div>
                 <p className="text-xs text-base-mut">
                     Token & Gist ID are saved only in this browser
                     (localStorage). We only talk to GitHub when you press
-                    Upload/Download.
+                    Upload/Download or when Auto Sync runs.
                 </p>
 
                 {/* Instructions */}
@@ -266,34 +391,29 @@ export default function Settings() {
                                 Choose <strong>Tokens (classic)</strong> →{" "}
                                 <strong>Generate new token (classic)</strong>.
                             </li>
-                            <li>
-                                Name it (e.g., <em>Checker Calendar Gist</em>)
-                                and set an expiration.
-                            </li>
+                            <li>Name it and set an expiration.</li>
                             <li>
                                 Enable only the <strong>gist</strong> scope.
                             </li>
                             <li>
-                                Generate and copy the token (you’ll see it only
-                                once).
+                                Generate and copy the token — you’ll only see it
+                                once.
                             </li>
-                            <li>
-                                Paste it above → Save → (optional) Test Token.
-                            </li>
+                            <li>Paste above → Save → (optional) Test Token.</li>
                             <li>
                                 Click <strong>Upload → Gist</strong> (first time
-                                leaves Gist ID empty; it will auto-fill).
+                                leave Gist ID empty; it will auto-fill).
                             </li>
                             <li>
-                                On your phone: open Settings →{" "}
-                                <strong>Scan QR</strong> to auto-fill, then{" "}
-                                <strong>Save</strong> and{" "}
-                                <strong>Download ← Gist</strong>.
+                                On your phone: simply open the **Share Link** QR
+                                with the camera, it will open this app and
+                                prefill credentials. Then tap **Download ←
+                                Gist**.
                             </li>
                         </ol>
                         <p className="text-xs mt-2">
                             Security tip: Treat your token like a password. Only
-                            show the QR to devices you trust.
+                            show/share the QR with devices you trust.
                         </p>
                     </details>
                 </div>
@@ -310,13 +430,25 @@ export default function Settings() {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="text-sm mb-2 text-base-mut">
-                            Scan on your other device
+                            Scan this on your other device
                         </div>
-                        <div className="bg-white rounded-xl p-3">
-                            <QRCodeSVG value={makeQRPayload()} size={220} />
-                        </div>
-                        <div className="text-xs text-base-mut mt-2">
-                            Contains your token + gist ID (v1).
+                        <div className="bg-white rounded-xl p-3 flex flex-col items-center gap-3">
+                            {/* Shareable URL QR (works with native camera) */}
+                            <QRCodeSVG value={makeShareLink()} size={220} />
+                            <div className="text-xs text-black/70">
+                                Opens app & pre-fills token + gist
+                            </div>
+                            <details className="w-full">
+                                <summary className="cursor-pointer text-xs text-black/70">
+                                    Show in-app payload QR
+                                </summary>
+                                <div className="mt-2 flex justify-center">
+                                    <QRCodeSVG
+                                        value={makePayloadQR()}
+                                        size={180}
+                                    />
+                                </div>
+                            </details>
                         </div>
                         <button
                             className="btn w-full mt-3"
@@ -334,17 +466,17 @@ export default function Settings() {
                     onClick={() => setScanQR(false)}
                 >
                     <div
-                        className="card p-2 w-full max-w-sm"
+                        className="card p-3 w-full max-w-sm"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="text-sm mb-2 text-center text-base-mut">
-                            Point camera at the QR
+                            Point camera at QR
                         </div>
+                        {/* Square scanning area */}
                         <div
                             id="qr-reader"
-                            ref={scannerRef}
-                            className="overflow-hidden rounded-xl bg-black"
-                            style={{ height: 280 }}
+                            className="mx-auto overflow-hidden rounded-xl bg-black"
+                            style={{ width: 320, height: 320 }}
                         />
                         <button
                             className="btn w-full mt-3"
