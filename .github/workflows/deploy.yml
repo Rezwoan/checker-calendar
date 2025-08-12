@@ -1,0 +1,46 @@
+name: Deploy to GitHub Pages
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+permissions:
+    contents: write
+
+jobs:
+    build-deploy:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  cache: npm
+
+            - name: Install deps
+              run: npm ci || npm i
+
+            # Optional: expose repo name so your Vite config can set `base` dynamically
+            - name: Export repo name for Vite base
+              run: echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
+
+            - name: Build
+              run: npm run build
+
+            # SPA fallback for GitHub Pages (so /report, /history, etc. load)
+            - name: Add 404.html fallback
+              run: cp dist/index.html dist/404.html
+
+            - name: Deploy to gh-pages
+              uses: peaceiris/actions-gh-pages@v3
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: ./dist
+                  commit_message: "deploy: ${{ github.sha }}"
