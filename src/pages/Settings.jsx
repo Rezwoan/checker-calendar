@@ -7,6 +7,7 @@ import {
     subscribe as onPWAChange,
     promptInstall,
 } from "../lib/pwaInstall";
+import QrScanner from "../components/QrScanner.jsx";
 
 export default function Settings() {
     const store = useAppStore();
@@ -57,6 +58,7 @@ export default function Settings() {
         }
         return () => autoTimer.current && clearInterval(autoTimer.current);
     }, [autoSync, intervalMin, token, gistId]);
+
     const toggleAuto = (x) => {
         setAutoSync(x);
         localStorage.setItem("cc_auto_sync", x ? "1" : "0");
@@ -67,16 +69,53 @@ export default function Settings() {
         localStorage.setItem("cc_auto_interval", String(n));
     };
 
-    // ---------- Share link / QR (already in your project) ----------
+    // ---------- Share link / QR ----------
     const makePayloadJSON = () =>
         JSON.stringify({ t: token.trim(), g: gistId.trim(), v: 1 });
     const makeBase64 = (json) => btoa(unescape(encodeURIComponent(json)));
     const makeShareLink = () => {
         const base = window.location.origin + import.meta.env.BASE_URL;
         const url = new URL(base);
+        url.hash = "#/"; // ensure app boot
         url.searchParams.set("ccsync", makeBase64(makePayloadJSON()));
         return url.toString();
     };
+
+    // ---------- Scanner ----------
+    const [scanOpen, setScanOpen] = useState(false);
+
+    function parseScanned(raw) {
+        try {
+            // If it's a URL with ?ccsync=...
+            const u = new URL(raw);
+            const b64 = u.searchParams.get("ccsync");
+            if (b64) {
+                const json = JSON.parse(decodeURIComponent(escape(atob(b64))));
+                return { token: json.t || "", gistId: json.g || "" };
+            }
+        } catch {
+            /* not a URL */
+        }
+
+        // If it looks like JSON directly
+        if (raw?.trim().startsWith("{")) {
+            try {
+                const json = JSON.parse(raw);
+                return {
+                    token: json.t || json.token || "",
+                    gistId: json.g || json.gistId || "",
+                };
+            } catch {}
+        }
+
+        // Fallback: if someone encoded base64 payload alone
+        try {
+            const json = JSON.parse(decodeURIComponent(escape(atob(raw))));
+            return { token: json.t || "", gistId: json.g || "" };
+        } catch {}
+
+        return null;
+    }
 
     // ---------- Gist actions ----------
     const saveLocal = () => {
@@ -162,24 +201,19 @@ export default function Settings() {
                             : "Install (unavailable)"}
                     </button>
 
-                    {/* Fixed: open the app start URL in this tab (no about:blank) */}
                     <button
                         className="btn"
-                        onClick={() => {
-                            const start = import.meta.env.BASE_URL || "./";
-                            window.location.assign(start); // same tab, just (re)open the app
-                        }}
+                        onClick={() => window.location.reload()}
                     >
                         Open in this window
                     </button>
                 </div>
-
                 <div className="text-xs text-base-mut">
                     {pwa.canInstall
                         ? "Install prompt is available."
                         : isDev
-                        ? "Tip: We enabled PWA in dev. Hard-reload or open a fresh tab if you still don’t see the prompt."
-                        : "On iOS Safari, use Share → “Add to Home Screen”. On desktop Chrome/Edge, click the Install icon in the address bar."}
+                        ? "Tip: Enable PWA in dev with VITE_PWA_DEV=true npm run dev if you want install locally."
+                        : "On iOS Safari: Share → “Add to Home Screen”. On desktop Chrome/Edge: click Install in the address bar."}
                 </div>
             </div>
 
@@ -207,9 +241,50 @@ export default function Settings() {
                     </label>
                 </div>
                 <p className="text-xs text-base-mut">
-                    Data lives locally (IndexedDB). Export regularly for
+                    All data lives locally (IndexedDB). Export regularly for
                     backups.
                 </p>
+            </div>
+
+            {/* Share & Scan */}
+            <div className="card p-4 space-y-3">
+                <div className="text-lg font-semibold">Share / Scan</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                    <div className="flex flex-col items-center gap-2">
+                        <QRCodeSVG value={makeShareLink()} size={196} />
+                        <div className="text-xs text-base-mut text-center">
+                            Scan this on your phone to set token & gist id
+                            automatically.
+                        </div>
+                        <button
+                            className="btn w-full"
+                            onClick={async () => {
+                                const link = makeShareLink();
+                                try {
+                                    await navigator.clipboard.writeText(link);
+                                    setMsg("Share link copied.");
+                                } catch {
+                                    setMsg(link);
+                                }
+                            }}
+                        >
+                            Copy Share Link
+                        </button>
+                    </div>
+
+                    <div className="space-y-2">
+                        <button
+                            className="btn w-full"
+                            onClick={() => setScanOpen(true)}
+                        >
+                            Scan from another device
+                        </button>
+                        <div className="text-xs text-base-mut">
+                            If camera fails on mobile, ensure you’re on HTTPS
+                            (your cPanel domain). Localhost also works.
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Gist sync */}
@@ -232,7 +307,14 @@ export default function Settings() {
                     />
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                    <button className="btn" onClick={saveLocal}>
+                    <button
+                        className="btn"
+                        onClick={() => {
+                            localStorage.setItem("gh_token", token.trim());
+                            localStorage.setItem("gh_gist", gistId.trim());
+                            setMsg("Saved locally.");
+                        }}
+                    >
                         Save
                     </button>
                     <button
@@ -256,24 +338,9 @@ export default function Settings() {
                     >
                         Download ← Gist
                     </button>
-                    <button
-                        className="btn"
-                        disabled={!token || !gistId}
-                        onClick={async () => {
-                            const link = makeShareLink();
-                            try {
-                                await navigator.clipboard.writeText(link);
-                                setMsg("Share link copied.");
-                            } catch {
-                                setMsg(link);
-                            }
-                        }}
-                    >
-                        Copy Share Link
-                    </button>
                 </div>
 
-                {/* Auto-sync controls */}
+                {/* Auto-sync */}
                 <div className="flex items-center gap-3 pt-2">
                     <label className="flex items-center gap-2 text-sm">
                         <input
@@ -299,6 +366,27 @@ export default function Settings() {
 
                 <div className="text-sm text-base-mut">{msg}</div>
             </div>
+
+            {/* Scanner modal */}
+            <QrScanner
+                open={scanOpen}
+                onClose={() => setScanOpen(false)}
+                onResult={(text) => {
+                    const parsed = parseScanned(text);
+                    if (parsed) {
+                        if (parsed.token) setToken(parsed.token);
+                        if (parsed.gistId) setGistId(parsed.gistId);
+                        localStorage.setItem("gh_token", parsed.token || "");
+                        localStorage.setItem("gh_gist", parsed.gistId || "");
+                        setMsg("Scanned and filled from QR.");
+                    } else {
+                        setMsg(
+                            "Scan didn’t look like a share link or payload."
+                        );
+                    }
+                    setScanOpen(false);
+                }}
+            />
         </div>
     );
 }
