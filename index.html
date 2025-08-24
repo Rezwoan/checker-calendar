@@ -7,11 +7,13 @@
             content="width=device-width,initial-scale=1,viewport-fit=cover"
         />
         <meta name="theme-color" content="#0a0a0a" />
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <!-- relative so it works in subfolders -->
+        <link rel="icon" href="favicon.svg" type="image/svg+xml" />
         <title>Checker Calendar</title>
     </head>
     <body class="bg-neutral-950 text-neutral-100">
         <div id="root"></div>
+        <!-- Vite rewrites this on build; fine to leave absolute for dev -->
         <script type="module" src="/src/main.jsx"></script>
     </body>
 </html>

@@ -11,6 +11,12 @@ import {
 export default function Settings() {
     const store = useAppStore();
 
+    // ---------- PWA install state ----------
+    const [pwa, setPwa] = useState(getPWAState());
+    const isDev = import.meta.env.DEV;
+    useEffect(() => onPWAChange(setPwa), []);
+
+    // ---------- Gist sync state ----------
     const [token, setToken] = useState(localStorage.getItem("gh_token") || "");
     const [gistId, setGistId] = useState(localStorage.getItem("gh_gist") || "");
     const [busy, setBusy] = useState(false);
@@ -19,11 +25,7 @@ export default function Settings() {
         if (msg) localStorage.removeItem("cc_msg");
     }, [msg]);
 
-    // ----- PWA install state -----
-    const [pwa, setPwa] = useState(getPWAState());
-    useEffect(() => onPWAChange(setPwa), []);
-
-    // ----- Auto Sync -----
+    // ---------- Auto Sync ----------
     const [autoSync, setAutoSync] = useState(
         localStorage.getItem("cc_auto_sync") === "1"
     );
@@ -65,10 +67,7 @@ export default function Settings() {
         localStorage.setItem("cc_auto_interval", String(n));
     };
 
-    // ----- QR share/scan -----
-    const [showQR, setShowQR] = useState(false);
-    const [scanQR, setScanQR] = useState(false);
-    const scannerStarted = useRef(false);
+    // ---------- Share link / QR (already in your project) ----------
     const makePayloadJSON = () =>
         JSON.stringify({ t: token.trim(), g: gistId.trim(), v: 1 });
     const makeBase64 = (json) => btoa(unescape(encodeURIComponent(json)));
@@ -78,82 +77,8 @@ export default function Settings() {
         url.searchParams.set("ccsync", makeBase64(makePayloadJSON()));
         return url.toString();
     };
-    useEffect(() => {
-        let html5QrCode = null,
-            mounted = true;
-        async function startScanner() {
-            if (!scanQR || scannerStarted.current) return;
-            scannerStarted.current = true;
-            const { Html5Qrcode, Html5QrcodeScanType } = await import(
-                "html5-qrcode"
-            );
-            if (!mounted) return;
-            html5QrCode = new Html5Qrcode("qr-reader", { verbose: false });
-            try {
-                await html5QrCode.start(
-                    { facingMode: "environment" },
-                    {
-                        fps: 10,
-                        qrbox: { width: 260, height: 260 },
-                        aspectRatio: 1.0,
-                        supportedScanTypes: [
-                            Html5QrcodeScanType.SCAN_TYPE_CAMERA,
-                        ],
-                    },
-                    (decoded) => {
-                        try {
-                            if (decoded.startsWith("http")) {
-                                const u = new URL(decoded);
-                                const code = u.searchParams.get("ccsync");
-                                if (!code) throw new Error("No ccsync param");
-                                const json = decodeURIComponent(
-                                    escape(atob(code))
-                                );
-                                const obj = JSON.parse(json);
-                                setToken(obj.t || "");
-                                setGistId(obj.g || "");
-                                setMsg(
-                                    "Scanned link. Click Save, then Download ← Gist."
-                                );
-                            } else if (decoded.startsWith("checker-sync:")) {
-                                const b64 = decoded.slice(
-                                    "checker-sync:".length
-                                );
-                                const json = decodeURIComponent(
-                                    escape(atob(b64))
-                                );
-                                const obj = JSON.parse(json);
-                                setToken(obj.t || "");
-                                setGistId(obj.g || "");
-                                setMsg(
-                                    "Scanned. Click Save, then Download ← Gist."
-                                );
-                            } else {
-                                setMsg("Unsupported QR content.");
-                            }
-                            setScanQR(false);
-                        } catch (err) {
-                            setMsg("Invalid QR: " + err.message);
-                        }
-                    }
-                );
-            } catch (e) {
-                setMsg("Camera error: " + e.message);
-            }
-        }
-        if (scanQR) startScanner();
-        return () => {
-            mounted = false;
-            if (html5QrCode)
-                html5QrCode
-                    .stop()
-                    .catch(() => {})
-                    .finally(() => html5QrCode.clear());
-            scannerStarted.current = false;
-        };
-    }, [scanQR]);
 
-    // ----- Gist actions -----
+    // ---------- Gist actions ----------
     const saveLocal = () => {
         localStorage.setItem("gh_token", token.trim());
         localStorage.setItem("gh_gist", gistId.trim());
@@ -225,7 +150,7 @@ export default function Settings() {
                                 );
                             } catch {
                                 setMsg(
-                                    "Install prompt not available; see instructions below."
+                                    "Install prompt not available right now."
                                 );
                             }
                         }}
@@ -236,17 +161,25 @@ export default function Settings() {
                             ? "Install"
                             : "Install (unavailable)"}
                     </button>
+
+                    {/* Fixed: open the app start URL in this tab (no about:blank) */}
                     <button
                         className="btn"
-                        onClick={() => window.open("about:blank", "_self")}
+                        onClick={() => {
+                            const start = import.meta.env.BASE_URL || "./";
+                            window.location.assign(start); // same tab, just (re)open the app
+                        }}
                     >
                         Open in this window
                     </button>
                 </div>
+
                 <div className="text-xs text-base-mut">
                     {pwa.canInstall
-                        ? "Install prompt is available on this device/browser."
-                        : "Tip: On iOS Safari, use Share → “Add to Home Screen”. On desktop Chrome/Edge, click the Install icon in the address bar."}
+                        ? "Install prompt is available."
+                        : isDev
+                        ? "Tip: We enabled PWA in dev. Hard-reload or open a fresh tab if you still don’t see the prompt."
+                        : "On iOS Safari, use Share → “Add to Home Screen”. On desktop Chrome/Edge, click the Install icon in the address bar."}
                 </div>
             </div>
 
@@ -326,16 +259,6 @@ export default function Settings() {
                     <button
                         className="btn"
                         disabled={!token || !gistId}
-                        onClick={() => setShowQR(true)}
-                    >
-                        Show QR
-                    </button>
-                    <button className="btn" onClick={() => setScanQR(true)}>
-                        Scan QR
-                    </button>
-                    <button
-                        className="btn"
-                        disabled={!token || !gistId}
                         onClick={async () => {
                             const link = makeShareLink();
                             try {
@@ -375,97 +298,7 @@ export default function Settings() {
                 </div>
 
                 <div className="text-sm text-base-mut">{msg}</div>
-                <p className="text-xs text-base-mut">
-                    Token & Gist ID stay in this browser (localStorage). We only
-                    contact GitHub when you Upload/Download or Auto Sync runs.
-                </p>
-
-                <div className="mt-3">
-                    <details className="open:bg-neutral-900/50 rounded-xl p-3 border border-base-line">
-                        <summary className="cursor-pointer text-sm font-medium">
-                            How to create a GitHub token
-                        </summary>
-                        <ol className="list-decimal pl-5 mt-2 space-y-1 text-sm text-base-mut">
-                            <li>
-                                GitHub → Settings → Developer settings →
-                                Personal access tokens.
-                            </li>
-                            <li>
-                                “Tokens (classic)” → **Generate new token
-                                (classic)**.
-                            </li>
-                            <li>
-                                Name it, set expiration, enable only **gist**.
-                            </li>
-                            <li>
-                                Copy the token once, paste above. First upload
-                                leaves Gist ID blank; it will auto-fill.
-                            </li>
-                            <li>
-                                To sync on another device: open **Show QR** and
-                                scan with phone camera, or **Copy Share Link**
-                                and open it on the device.
-                            </li>
-                        </ol>
-                    </details>
-                </div>
             </div>
-
-            {/* ---- QR MODALS ---- */}
-            {showQR && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-                    onClick={() => setShowQR(false)}
-                >
-                    <div
-                        className="card p-4 w-full max-w-xs text-center"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="text-sm mb-2 text-base-mut">
-                            Scan on your other device
-                        </div>
-                        <div className="bg-white rounded-xl p-3 flex flex-col items-center gap-3">
-                            <QRCodeSVG value={makeShareLink()} size={220} />
-                            <div className="text-xs text-black/70">
-                                Opens app & pre-fills token + gist
-                            </div>
-                        </div>
-                        <button
-                            className="btn w-full mt-3"
-                            onClick={() => setShowQR(false)}
-                        >
-                            Close
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {scanQR && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-                    onClick={() => setScanQR(false)}
-                >
-                    <div
-                        className="card p-3 w-full max-w-sm"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="text-sm mb-2 text-center text-base-mut">
-                            Point camera at QR
-                        </div>
-                        <div
-                            id="qr-reader"
-                            className="mx-auto overflow-hidden rounded-xl bg-black"
-                            style={{ width: 320, height: 320 }}
-                        />
-                        <button
-                            className="btn w-full mt-3"
-                            onClick={() => setScanQR(false)}
-                        >
-                            Close
-                        </button>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

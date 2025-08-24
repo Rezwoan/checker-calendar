@@ -3,6 +3,7 @@ import StatCard from "../components/StatCard.jsx";
 import ChartPanel from "../components/ChartPanel.jsx";
 import { useAppStore } from "../store/useAppStore";
 import { startOfToday, toISODate } from "../lib/date";
+import { StreakSummary } from "../components/Streaks.jsx";
 
 export default function Report() {
     const { activeTabId, checks, createdAt } = useAppStore();
@@ -55,13 +56,18 @@ export default function Report() {
             })(),
             createdAt: createdAt?.slice(0, 10) || "—",
         };
-    }, [activeTabId, checks]);
+    }, [activeTabId, checks, createdAt, todayISO]);
 
     return (
         <div className="space-y-3">
+            {/* keep your charts */}
             <ChartPanel days={7} />
             <ChartPanel days={30} />
 
+            {/* new: streaks block (current, best, last-30d bar) */}
+            <StreakSummary checks={tabChecks} />
+
+            {/* your existing KPI grid */}
             <div className="grid grid-cols-2 gap-3">
                 <StatCard title="Today" value={counters.today} />
                 <StatCard title="This Week" value={counters.week} />

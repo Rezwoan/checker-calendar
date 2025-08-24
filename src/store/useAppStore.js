@@ -8,19 +8,22 @@ const todayISO = toISODate(startOfToday())
 export const useAppStore = create(
     persist(
         (set, get) => ({
-            tabs: [],                 // [{id, name, order, emoji}]
+            tabs: [],
             activeTabId: null,
             // checks: { [tabId]: { [isoDate]: { checked, note, emoji } } }
             checks: {},
             history: [],
             createdAt: new Date().toISOString(),
+            // ui helpers
+            ui: {
+                homeCursorISO: null // when set, the Home calendar should open to this month
+            },
 
             load: async () => {
                 const payload = await db.loadAll()
                 if (payload) set(payload)
 
                 if (!get().tabs.length) {
-                    // New users start with a single Calendar tab
                     const t = { id: crypto.randomUUID(), name: 'Calendar', order: 0, emoji: '📅' }
                     set({ tabs: [t], activeTabId: t.id })
                     get().save()
@@ -30,6 +33,7 @@ export const useAppStore = create(
             },
 
             setActiveTab: (id) => set({ activeTabId: id }),
+            setHomeCursorISO: (iso) => set({ ui: { ...get().ui, homeCursorISO: iso } }),
 
             addTab: (name, emoji = '✅') => {
                 const tab = { id: crypto.randomUUID(), name, order: get().tabs.length, emoji }
@@ -101,6 +105,15 @@ export const useAppStore = create(
                 get().save('note', { tabId, date: dateISO, note, emoji })
             },
 
+            clearNote: (dateISO) => {
+                const tabId = get().activeTabId
+                const tabChecks = { ...(get().checks[tabId] || {}) }
+                if (!tabChecks[dateISO]) return
+                tabChecks[dateISO] = { ...tabChecks[dateISO], note: '', emoji: '' }
+                set({ checks: { ...get().checks, [tabId]: tabChecks } })
+                get().save('note_clear', { tabId, date: dateISO })
+            },
+
             save: async (action = 'save', details = {}) => {
                 const state = get()
                 const payload = {
@@ -108,7 +121,8 @@ export const useAppStore = create(
                     activeTabId: state.activeTabId,
                     checks: state.checks,
                     history: [{ id: crypto.randomUUID(), ts: Date.now(), action, ...details }, ...state.history].slice(0, 500),
-                    createdAt: state.createdAt
+                    createdAt: state.createdAt,
+                    ui: state.ui
                 }
                 set(payload)
                 await db.saveAll(payload)

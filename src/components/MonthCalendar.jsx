@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useAppStore } from "../store/useAppStore";
 import {
     getMonthMatrix,
@@ -7,10 +7,23 @@ import {
     isSameDay,
 } from "../lib/date";
 import { motion } from "framer-motion";
+import NoteEditor from "./NoteEditor.jsx";
 
 export default function MonthCalendar() {
-    const { activeTabId, checks, toggleCheck, setNote } = useAppStore();
-    const [cursor, setCursor] = useState(new Date());
+    const {
+        activeTabId,
+        checks,
+        toggleCheck,
+        setNote,
+        clearNote,
+        ui,
+        setHomeCursorISO,
+    } = useAppStore();
+    const [cursor, setCursor] = useState(() => {
+        // if navigation requested from History
+        return ui?.homeCursorISO ? new Date(ui.homeCursorISO) : new Date();
+    });
+    const [noteFor, setNoteFor] = useState(null); // date object for modal
     const monthMatrix = useMemo(
         () => getMonthMatrix(cursor.getFullYear(), cursor.getMonth()),
         [cursor]
@@ -21,11 +34,20 @@ export default function MonthCalendar() {
         const d = new Date(cursor);
         d.setMonth(d.getMonth() + delta);
         setCursor(d);
+        setHomeCursorISO(toISODate(d));
     };
     const monthLabel = cursor.toLocaleString(undefined, {
         month: "long",
         year: "numeric",
     });
+
+    // simple long-press for mobile
+    const timersRef = useRef({});
+    const startPress = (i, date, val) => {
+        clearTimeout(timersRef.current[i]);
+        timersRef.current[i] = setTimeout(() => setNoteFor({ date, val }), 350);
+    };
+    const cancelPress = (i) => clearTimeout(timersRef.current[i]);
 
     return (
         <div className="space-y-3">
@@ -62,6 +84,7 @@ export default function MonthCalendar() {
                     const val = tabChecks[iso];
                     const checked = !!val?.checked;
                     const today = isSameDay(d, startOfToday());
+
                     return (
                         <motion.button
                             key={i}
@@ -69,42 +92,60 @@ export default function MonthCalendar() {
                             onClick={() => toggleCheck(iso)}
                             onContextMenu={(e) => {
                                 e.preventDefault();
-                                const note = prompt(
-                                    "Short note for this day (leave blank to clear):",
-                                    val?.note || ""
-                                );
-                                if (note !== null) {
-                                    const emoji = prompt(
-                                        "Emoji (optional)",
-                                        val?.emoji || ""
-                                    );
-                                    setNote(iso, note, emoji || "");
-                                }
+                                setNoteFor({ date: d, val });
                             }}
-                            className={`aspect-square rounded-xl border ${
-                                isCurrentMonth ? "" : "opacity-40"
-                            } ${
-                                checked
-                                    ? "bg-brand-600/20 border-brand-600"
-                                    : "border-base-line"
-                            } relative`}
+                            onPointerDown={() => startPress(i, d, val)}
+                            onPointerUp={() => cancelPress(i)}
+                            onPointerLeave={() => cancelPress(i)}
+                            className={`aspect-square rounded-xl border overflow-hidden
+                ${isCurrentMonth ? "" : "opacity-40"}
+                ${
+                    checked
+                        ? "bg-brand-600/20 border-brand-600"
+                        : "border-base-line"
+                }`}
                             aria-label={`Day ${d.getDate()} ${
                                 checked ? "checked" : "not checked"
                             }`}
                         >
-                            <div className="absolute top-1.5 left-1.5 text-[13px] text-base-mut">
-                                {d.getDate()}
+                            <div className="grid grid-rows-[auto_1fr_auto] h-full w-full p-1">
+                                <div className="text-[12px] sm:text-[13px] text-base-mut text-left leading-none">
+                                    {d.getDate()}
+                                </div>
+                                <div className="flex items-center justify-center">
+                                    <span className="text-[24px] sm:text-[30px] leading-none">
+                                        {checked ? "✔️" : val?.emoji || ""}
+                                    </span>
+                                </div>
+                                <div
+                                    className={`h-1 rounded-full mx-1 mb-1 ${
+                                        today
+                                            ? "bg-brand-600/70"
+                                            : "bg-transparent"
+                                    }`}
+                                />
                             </div>
-                            <div className="flex items-center justify-center h-full text-3xl">
-                                {checked ? "✔️" : val?.emoji || ""}
-                            </div>
-                            {today && (
-                                <div className="absolute bottom-1.5 left-1.5 right-1.5 h-1.5 rounded-full bg-brand-600/70" />
-                            )}
                         </motion.button>
                     );
                 })}
             </div>
+
+            {noteFor && (
+                <NoteEditor
+                    date={noteFor.date}
+                    initNote={noteFor.val?.note || ""}
+                    initEmoji={noteFor.val?.emoji || ""}
+                    onSave={(note, emoji) =>
+                        setNote(toISODate(noteFor.date), note, emoji)
+                    }
+                    onClear={() => clearNote(toISODate(noteFor.date))}
+                    onClose={() => setNoteFor(null)}
+                />
+            )}
+
+            <p className="text-sm text-base-mut">
+                Tip: long-press/right-click a day to add a note or emoji.
+            </p>
         </div>
     );
 }
